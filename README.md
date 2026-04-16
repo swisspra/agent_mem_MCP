@@ -30,6 +30,13 @@ your-project/
 
 ## Installation
 
+### Step 0 — Clone
+
+```bash
+git clone https://github.com/swisspra/agent_mem_MCP.git
+cd agent_mem_MCP
+```
+
 ### Step 1 — Create a virtual environment
 
 ```bash
