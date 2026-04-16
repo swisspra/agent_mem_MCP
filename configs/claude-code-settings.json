@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./.agent-mem-hooks/claude-code-session-start.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./.agent-mem-hooks/claude-code-stop.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

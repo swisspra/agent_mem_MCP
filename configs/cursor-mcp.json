@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "agent-memory": {
+      "command": "/full/path/to/venv/bin/python",
+      "args": ["/full/path/to/server.py"],
+      "env": {
+        "AGENT_PROJECT_DIR": "${workspaceFolder}"
+      }
+    }
+  }
+}
