@@ -413,8 +413,8 @@ async def memory_agent_join(params: AgentJoinInput) -> str:
     ho = [m for m in mem if m["memory_type"] == MemoryType.HANDOFF]
     if ho: lines.append(f"🤝 Last handoff from `{ho[-1]['agent_name']}` — read the briefing!\n")
     # Show pending tickets for this agent
-    tickets = _load_tickets()
-    my_tickets = [t for t in tickets if t["status"] in (TicketStatus.OPEN, TicketStatus.CLAIMED)
+    tickets = _load_ticket_index()
+    my_tickets = [t for t in tickets if t["status"] in (TicketStatus.OPEN, TicketStatus.REJECTED)
                   and (not t.get("assigned_to")
                        or params.agent_name.lower() in t["assigned_to"].lower()
                        or params.agent_platform.lower() in t["assigned_to"].lower())]
@@ -423,7 +423,8 @@ async def memory_agent_join(params: AgentJoinInput) -> str:
         lines.append(f"🎫 **{len(my_tickets)} ticket(s) waiting for you!**")
         for t in my_tickets:
             pe = pri_emoji.get(t["priority"],"⚪")
-            lines.append(f"  {pe} `{t['id']}` — {t['title']} (from `{t['created_by']}`)")
+            rej = f" ⚠️ rejected {t['rejection_count']}x" if t.get("rejection_count") else ""
+            lines.append(f"  {pe} `{t['id']}` — {t['title']} (from `{t['created_by']}`){rej}")
         lines.append(f"Use `memory_list_tickets` for details, `memory_claim_ticket` to start.\n")
     lines += ["⚡ **Protocol**:", "1. `memory_get_briefing` — read context NOW",
               "2. `memory_write` — after EVERY action", "3. `memory_checkpoint` — every 10-15 min",
@@ -666,8 +667,8 @@ async def memory_get_briefing(params: BriefingInput) -> str:
             _add(f"\n📂 **Reference dirs available**: {', '.join(avail)} — use `memory_context_dirs` to browse")
 
     # Tickets
-    tickets = _load_tickets()
-    open_tickets = [t for t in tickets if t["status"] in (TicketStatus.OPEN, TicketStatus.CLAIMED, TicketStatus.IN_PROGRESS)]
+    tickets = _load_ticket_index()
+    open_tickets = [t for t in tickets if t["status"] in (TicketStatus.OPEN, TicketStatus.IN_PROGRESS, TicketStatus.IN_REVIEW)]
     if open_tickets:
         pri_emoji = {"low":"🟢","medium":"🟡","high":"🟠","critical":"🔴"}
         _add(f"## 🎫 Open Tickets ({len(open_tickets)})")
@@ -1234,24 +1235,65 @@ async def memory_context_read(params: ContextDirReadInput) -> str:
     return f"File `{params.filename}` not found in any context directory."
 
 
-# ── Ticketing System ─────────────────────────────────────
+# ── Ticketing System (file-based) ────────────────────────
+#
+# Folder structure inside .agent-mem/:
+#   tickets/
+#   ├── TK-abc123.md              ← OPEN tickets (root = queue)
+#   ├── review/                   ← Agent submitted work for review
+#   │   └── TK-abc123-submit.md
+#   ├── closed/                   ← Approved & done
+#   │   ├── TK-abc123.md          ← Original ticket (moved here)
+#   │   └── TK-abc123-submit.md   ← Submitted work (moved here)
+#   └── rejected/                 ← Failed review
+#       ├── TK-abc123.md          ← Original ticket (moved here)
+#       ├── TK-abc123-submit.md   ← Submitted work (moved here)
+#       └── TK-abc123-rejected.md ← Rejection note + how to fix
+
+import shutil
+
+def _tickets_dir() -> Path:
+    d = MEMORY_DIR / "tickets"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "review").mkdir(exist_ok=True)
+    (d / "closed").mkdir(exist_ok=True)
+    (d / "rejected").mkdir(exist_ok=True)
+    return d
+
+def _ticket_index_p() -> Path:
+    return MEMORY_DIR / "tickets" / "_index.json"
+
+def _load_ticket_index() -> list:
+    return _load(_ticket_index_p()).get("tickets", [])
+
+def _save_ticket_index(tickets: list):
+    _save(_ticket_index_p(), {"tickets": tickets})
+
+def _write_ticket_md(filepath: Path, data: dict):
+    """Write a ticket as a human-readable .md file."""
+    lines = [f"# {data.get('title', 'Untitled')}"]
+    lines.append(f"**ID**: `{data.get('id', '?')}`")
+    lines.append(f"**Status**: {data.get('status', '?')}")
+    lines.append(f"**Priority**: {data.get('priority', '?')}")
+    lines.append(f"**Created by**: `{data.get('created_by', '?')}`")
+    lines.append(f"**Created at**: {data.get('created_at', '?')}")
+    if data.get("assigned_to"):
+        lines.append(f"**Assigned to**: `{data['assigned_to']}`")
+    if data.get("tags"):
+        lines.append(f"**Tags**: {', '.join(data['tags'])}")
+    if data.get("related_files"):
+        lines.append(f"**Files**: {', '.join(data['related_files'])}")
+    lines.append(f"\n---\n")
+    lines.append(data.get("description", ""))
+    filepath.write_text("\n".join(lines), encoding="utf-8")
+
 
 class TicketPriority(str, Enum):
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
+    LOW = "low"; MEDIUM = "medium"; HIGH = "high"; CRITICAL = "critical"
 
 class TicketStatus(str, Enum):
-    OPEN = "open"
-    CLAIMED = "claimed"
-    IN_PROGRESS = "in_progress"
-    RESOLVED = "resolved"
-    REJECTED = "rejected"
-
-def _tickets_p(): return MEMORY_DIR / "tickets.json"
-def _load_tickets(): return _load(_tickets_p()).get("tickets", [])
-def _save_tickets(t): _save(_tickets_p(), {"tickets": t})
+    OPEN = "open"; IN_PROGRESS = "in_progress"
+    IN_REVIEW = "in_review"; CLOSED = "closed"; REJECTED = "rejected"
 
 class CreateTicketInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -1259,7 +1301,7 @@ class CreateTicketInput(BaseModel):
     title: str = Field(..., description="Short ticket title", min_length=1, max_length=200)
     description: str = Field(..., description="What needs to be done — be specific", min_length=1, max_length=5000)
     priority: TicketPriority = Field(default=TicketPriority.MEDIUM)
-    assigned_to: Optional[str] = Field(default=None, description="Specific agent name or platform to assign (e.g. 'cursor', 'codex', 'claude-code'). Leave empty for any agent.")
+    assigned_to: Optional[str] = Field(default=None, description="Agent name or platform to assign (e.g. 'cursor', 'codex'). Empty = any agent.")
     tags: Optional[List[str]] = Field(default_factory=list)
     related_files: Optional[List[str]] = Field(default_factory=list)
 
@@ -1268,33 +1310,45 @@ class ClaimTicketInput(BaseModel):
     agent_name: str = Field(..., min_length=1, max_length=100)
     ticket_id: str = Field(..., description="Ticket ID to claim", min_length=1)
 
-class ResolveTicketInput(BaseModel):
+class SubmitTicketInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     agent_name: str = Field(..., min_length=1, max_length=100)
     ticket_id: str = Field(..., min_length=1)
-    resolution: str = Field(..., description="What was done to resolve this", min_length=1, max_length=5000)
+    summary: str = Field(..., description="What was done", min_length=1, max_length=5000)
     files_changed: Optional[List[str]] = Field(default_factory=list)
+    notes: Optional[str] = Field(default=None, description="Any additional notes for reviewer", max_length=2000)
+
+class ReviewTicketInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    agent_name: str = Field(..., description="Reviewer agent name", min_length=1, max_length=100)
+    ticket_id: str = Field(..., min_length=1)
+    verdict: str = Field(..., description="'approve' or 'reject'", pattern="^(approve|reject)$")
+    review_notes: str = Field(..., description="Review feedback", min_length=1, max_length=5000)
+    fix_instructions: Optional[str] = Field(default=None, description="If rejected: how to fix", max_length=5000)
 
 class ListTicketsInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     status: Optional[TicketStatus] = Field(default=None, description="Filter by status")
     assigned_to: Optional[str] = Field(default=None, description="Filter by assignee")
+    include_closed: Optional[bool] = Field(default=False, description="Include closed/rejected tickets")
+
 
 @mcp.tool(name="memory_create_ticket", annotations={"title":"Create Ticket","readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
 async def memory_create_ticket(params: CreateTicketInput) -> str:
-    """Create a help ticket for another agent.
+    """Create a ticket requesting help from another agent.
 
-    Use when you need help from a specific type of agent, or any available agent.
+    Ticket is saved as .md file in tickets/ (open queue).
+    Assign to a specific agent/platform or leave open for anyone.
+
     Examples:
-    - Coder needs PM to review architecture → assigned_to="claude"
-    - PM needs Cursor to fix a CSS bug → assigned_to="cursor"
-    - Anyone can pick it up → assigned_to=None
-
-    The next agent that checks in will see pending tickets in their briefing.
+    - PM needs coder: assigned_to="cursor"
+    - Coder needs review: assigned_to="claude"
+    - Anyone can pick up: assigned_to=None
     """
-    tickets = _load_tickets()
-    ticket = {
-        "id": f"TK-{_id()}",
+    _tickets_dir()
+    ticket_id = f"TK-{_id()}"
+    ticket_data = {
+        "id": ticket_id,
         "title": params.title,
         "description": params.description,
         "priority": params.priority,
@@ -1304,101 +1358,259 @@ async def memory_create_ticket(params: CreateTicketInput) -> str:
         "claimed_by": None,
         "tags": params.tags or [],
         "related_files": params.related_files or [],
-        "resolution": None,
         "created_at": _now(),
         "updated_at": _now(),
         "timestamp": time.time(),
     }
-    tickets.append(ticket)
-    _save_tickets(tickets)
+
+    # Save .md file in tickets root (= open queue)
+    _write_ticket_md(_tickets_dir() / f"{ticket_id}.md", ticket_data)
+
+    # Update index
+    idx = _load_ticket_index()
+    idx.append(ticket_data)
+    _save_ticket_index(idx)
 
     assign_str = f"→ assigned to **{params.assigned_to}**" if params.assigned_to else "→ open for any agent"
-    pri_emoji = {"low": "🟢", "medium": "🟡", "high": "🟠", "critical": "🔴"}[params.priority]
+    pe = {"low":"🟢","medium":"🟡","high":"🟠","critical":"🔴"}[params.priority]
     return (
-        f"🎫 Ticket created: `{ticket['id']}`\n"
-        f"{pri_emoji} **{params.priority.upper()}** | {params.title}\n"
-        f"By: `{params.agent_name}` {assign_str}"
+        f"🎫 Ticket created: `{ticket_id}`\n"
+        f"{pe} **{params.priority.upper()}** | {params.title}\n"
+        f"By `{params.agent_name}` {assign_str}\n"
+        f"File: `tickets/{ticket_id}.md`"
     )
+
 
 @mcp.tool(name="memory_claim_ticket", annotations={"title":"Claim Ticket","readOnlyHint":False,"destructiveHint":False,"idempotentHint":True,"openWorldHint":False})
 async def memory_claim_ticket(params: ClaimTicketInput) -> str:
-    """Claim an open ticket to work on it. Changes status to in_progress."""
-    tickets = _load_tickets()
-    for t in tickets:
+    """Claim an open ticket. Changes status to in_progress."""
+    idx = _load_ticket_index()
+    for t in idx:
         if t["id"] == params.ticket_id:
-            if t["status"] not in (TicketStatus.OPEN, TicketStatus.CLAIMED):
+            if t["status"] not in (TicketStatus.OPEN,):
                 return f"Ticket `{t['id']}` is already {t['status']}."
             t["status"] = TicketStatus.IN_PROGRESS
             t["claimed_by"] = params.agent_name
             t["updated_at"] = _now()
-            _save_tickets(tickets)
-            return f"🎫 Claimed `{t['id']}`: **{t['title']}**\nNow in progress by `{params.agent_name}`"
+            _save_ticket_index(idx)
+            # Update .md file
+            _write_ticket_md(_tickets_dir() / f"{t['id']}.md", t)
+            return (
+                f"🔧 Claimed `{t['id']}`: **{t['title']}**\n"
+                f"Now in progress by `{params.agent_name}`\n"
+                f"When done, use `memory_submit_ticket` to submit for review."
+            )
     return f"Ticket `{params.ticket_id}` not found."
 
-@mcp.tool(name="memory_resolve_ticket", annotations={"title":"Resolve Ticket","readOnlyHint":False,"destructiveHint":False,"idempotentHint":True,"openWorldHint":False})
-async def memory_resolve_ticket(params: ResolveTicketInput) -> str:
-    """Mark a ticket as resolved with what was done."""
-    tickets = _load_tickets()
-    for t in tickets:
+
+@mcp.tool(name="memory_submit_ticket", annotations={"title":"Submit Work for Review","readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+async def memory_submit_ticket(params: SubmitTicketInput) -> str:
+    """Submit completed work on a ticket for review.
+
+    Creates a submission report in tickets/review/ and moves ticket to review status.
+    Another agent (reviewer/PM) will approve or reject.
+    """
+    idx = _load_ticket_index()
+    for t in idx:
         if t["id"] == params.ticket_id:
-            t["status"] = TicketStatus.RESOLVED
-            t["resolution"] = params.resolution
-            t["resolved_by"] = params.agent_name
-            t["resolved_at"] = _now()
+            if t["status"] not in (TicketStatus.IN_PROGRESS, TicketStatus.REJECTED):
+                return f"Ticket `{t['id']}` is {t['status']} — can only submit in_progress or rejected tickets."
+            t["status"] = TicketStatus.IN_REVIEW
             t["updated_at"] = _now()
+            _save_ticket_index(idx)
+
+            # Update ticket .md
+            _write_ticket_md(_tickets_dir() / f"{t['id']}.md", t)
+
+            # Create submission report
+            submit_lines = [
+                f"# Submission: {t['title']}",
+                f"**Ticket**: `{t['id']}`",
+                f"**Submitted by**: `{params.agent_name}`",
+                f"**Submitted at**: {_now()}",
+                f"**Original request by**: `{t['created_by']}`",
+            ]
             if params.files_changed:
-                t["files_changed"] = params.files_changed
-            _save_tickets(tickets)
+                submit_lines.append(f"\n## Files Changed")
+                for f in params.files_changed:
+                    submit_lines.append(f"- `{f}`")
+            submit_lines.append(f"\n## Summary")
+            submit_lines.append(params.summary)
+            if params.notes:
+                submit_lines.append(f"\n## Notes")
+                submit_lines.append(params.notes)
 
-            # Also write as memory for the record
-            mem = _load_mem()
-            mem.append({
-                "id": _id(), "agent_name": params.agent_name,
-                "memory_type": MemoryType.PROGRESS,
-                "title": f"Resolved ticket {t['id']}: {t['title']}",
-                "content": f"**Ticket**: {t['title']}\n**Requested by**: {t['created_by']}\n**Resolution**: {params.resolution}",
-                "tags": ["ticket", "resolved"], "related_files": params.files_changed or [],
-                "priority": 1, "pinned": False, "created_at": _now(), "timestamp": time.time()
-            })
-            _save_mem(mem)
+            submit_path = _tickets_dir() / "review" / f"{t['id']}-submit.md"
+            submit_path.write_text("\n".join(submit_lines), encoding="utf-8")
 
-            return f"✅ Resolved `{t['id']}`: **{t['title']}**\nBy `{params.agent_name}`"
+            return (
+                f"📤 Submitted `{t['id']}` for review!\n"
+                f"**{t['title']}** by `{params.agent_name}`\n"
+                f"Report: `tickets/review/{t['id']}-submit.md`\n"
+                f"Waiting for reviewer to approve or reject."
+            )
     return f"Ticket `{params.ticket_id}` not found."
+
+
+@mcp.tool(name="memory_review_ticket", annotations={"title":"Review Submitted Ticket","readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
+async def memory_review_ticket(params: ReviewTicketInput) -> str:
+    """Review a submitted ticket. Approve → closed/ or Reject → rejected/.
+
+    On approve: moves ticket + submission to closed/
+    On reject: moves to rejected/ + creates rejection note with fix instructions.
+    """
+    tdir = _tickets_dir()
+    idx = _load_ticket_index()
+    for t in idx:
+        if t["id"] == params.ticket_id:
+            if t["status"] != TicketStatus.IN_REVIEW:
+                return f"Ticket `{t['id']}` is {t['status']} — can only review tickets in_review."
+
+            ticket_file = tdir / f"{t['id']}.md"
+            submit_file = tdir / "review" / f"{t['id']}-submit.md"
+
+            if params.verdict == "approve":
+                t["status"] = TicketStatus.CLOSED
+                t["reviewed_by"] = params.agent_name
+                t["reviewed_at"] = _now()
+                t["updated_at"] = _now()
+                _save_ticket_index(idx)
+
+                # Move files to closed/
+                dest = tdir / "closed"
+                if ticket_file.exists():
+                    shutil.move(str(ticket_file), str(dest / ticket_file.name))
+                if submit_file.exists():
+                    shutil.move(str(submit_file), str(dest / submit_file.name))
+
+                # Write review result
+                review_path = dest / f"{t['id']}-review.md"
+                review_path.write_text("\n".join([
+                    f"# ✅ Review: APPROVED",
+                    f"**Ticket**: `{t['id']}` — {t['title']}",
+                    f"**Reviewed by**: `{params.agent_name}`",
+                    f"**Reviewed at**: {_now()}",
+                    f"\n## Review Notes",
+                    params.review_notes,
+                ]), encoding="utf-8")
+
+                # Log as memory
+                mem = _load_mem()
+                mem.append({
+                    "id": _id(), "agent_name": params.agent_name,
+                    "memory_type": MemoryType.PROGRESS,
+                    "title": f"✅ Approved {t['id']}: {t['title']}",
+                    "content": f"Ticket by `{t['created_by']}`, done by `{t.get('claimed_by','?')}`. {params.review_notes[:300]}",
+                    "tags": ["ticket","approved"], "related_files": [],
+                    "priority": 1, "pinned": False, "created_at": _now(), "timestamp": time.time()
+                })
+                _save_mem(mem)
+
+                return (
+                    f"✅ Approved `{t['id']}`: **{t['title']}**\n"
+                    f"Moved to `tickets/closed/`\n"
+                    f"Reviewed by `{params.agent_name}`"
+                )
+
+            else:  # reject
+                t["status"] = TicketStatus.REJECTED
+                t["reviewed_by"] = params.agent_name
+                t["reviewed_at"] = _now()
+                t["updated_at"] = _now()
+                _save_ticket_index(idx)
+
+                # Move files to rejected/
+                dest = tdir / "rejected"
+                if ticket_file.exists():
+                    shutil.move(str(ticket_file), str(dest / ticket_file.name))
+                if submit_file.exists():
+                    shutil.move(str(submit_file), str(dest / submit_file.name))
+
+                # Write rejection note with fix instructions
+                reject_path = dest / f"{t['id']}-rejected.md"
+                reject_lines = [
+                    f"# ❌ Review: REJECTED",
+                    f"**Ticket**: `{t['id']}` — {t['title']}",
+                    f"**Rejected by**: `{params.agent_name}`",
+                    f"**Rejected at**: {_now()}",
+                    f"**Original assignee**: `{t.get('claimed_by', '?')}`",
+                    f"\n## What went wrong",
+                    params.review_notes,
+                ]
+                if params.fix_instructions:
+                    reject_lines.extend([
+                        f"\n## How to fix",
+                        params.fix_instructions,
+                    ])
+                reject_lines.append(f"\n---\n*Re-claim this ticket with `memory_claim_ticket` and try again.*")
+                reject_path.write_text("\n".join(reject_lines), encoding="utf-8")
+
+                # Update ticket md in rejected/ for re-claiming
+                t_copy = dict(t)
+                t_copy["status"] = TicketStatus.OPEN  # reopen for next attempt
+                _write_ticket_md(tdir / f"{t['id']}.md", t_copy)
+
+                # Reopen in index so it shows up again
+                t["status"] = TicketStatus.OPEN
+                t["rejection_count"] = t.get("rejection_count", 0) + 1
+                _save_ticket_index(idx)
+
+                # Log as memory
+                mem = _load_mem()
+                mem.append({
+                    "id": _id(), "agent_name": params.agent_name,
+                    "memory_type": MemoryType.WARNING,
+                    "title": f"❌ Rejected {t['id']}: {t['title']}",
+                    "content": f"Rejected work by `{t.get('claimed_by','?')}`. {params.review_notes[:200]}\nFix: {(params.fix_instructions or 'See rejection note')[:200]}",
+                    "tags": ["ticket","rejected"], "related_files": [],
+                    "priority": 2, "pinned": True, "created_at": _now(), "timestamp": time.time()
+                })
+                _save_mem(mem)
+
+                return (
+                    f"❌ Rejected `{t['id']}`: **{t['title']}**\n"
+                    f"Rejection note: `tickets/rejected/{t['id']}-rejected.md`\n"
+                    f"Ticket reopened for next agent to fix.\n"
+                    f"Reviewed by `{params.agent_name}`"
+                )
+    return f"Ticket `{params.ticket_id}` not found."
+
 
 @mcp.tool(name="memory_list_tickets", annotations={"title":"List Tickets","readOnlyHint":True,"destructiveHint":False,"idempotentHint":True,"openWorldHint":False})
 async def memory_list_tickets(params: ListTicketsInput) -> str:
-    """List all tickets, optionally filtered by status or assignee."""
-    tickets = _load_tickets()
-    if not tickets:
-        return "No tickets yet."
+    """List tickets. Shows open/in_progress/in_review by default. Use include_closed for history."""
+    idx = _load_ticket_index()
+    if not idx:
+        return "No tickets yet. Use `memory_create_ticket` to create one."
 
-    filtered = tickets
+    filtered = idx
     if params.status:
         filtered = [t for t in filtered if t["status"] == params.status]
+    elif not params.include_closed:
+        filtered = [t for t in filtered if t["status"] not in (TicketStatus.CLOSED,)]
     if params.assigned_to:
         filtered = [t for t in filtered if
                     params.assigned_to.lower() in (t.get("assigned_to") or "").lower() or
                     params.assigned_to.lower() in (t.get("claimed_by") or "").lower()]
 
     if not filtered:
-        return f"No tickets matching filters."
+        return "No tickets matching filters."
 
-    pri_emoji = {"low": "🟢", "medium": "🟡", "high": "🟠", "critical": "🔴"}
-    status_emoji = {"open": "📭", "claimed": "📬", "in_progress": "🔧", "resolved": "✅", "rejected": "❌"}
+    pe = {"low":"🟢","medium":"🟡","high":"🟠","critical":"🔴"}
+    se = {"open":"📭","in_progress":"🔧","in_review":"📤","closed":"✅","rejected":"❌"}
 
     lines = [f"# 🎫 Tickets ({len(filtered)})\n"]
-    for t in sorted(filtered, key=lambda x: {"critical":0,"high":1,"medium":2,"low":3}.get(x["priority"],9)):
-        se = status_emoji.get(t["status"], "❓")
-        pe = pri_emoji.get(t["priority"], "⚪")
+    for t in sorted(filtered, key=lambda x: ({"critical":0,"high":1,"medium":2,"low":3}.get(x["priority"],9), -x.get("timestamp",0))):
+        s = se.get(t["status"],"❓"); p = pe.get(t["priority"],"⚪")
         assign = f"→ `{t['assigned_to']}`" if t.get("assigned_to") else "→ any"
-        claimed = f" (claimed by `{t['claimed_by']}`)" if t.get("claimed_by") else ""
-        lines.append(f"### {se} {pe} `{t['id']}` — {t['title']}")
+        claimed = f" ⚡ `{t['claimed_by']}`" if t.get("claimed_by") else ""
+        rej = f" (rejected {t['rejection_count']}x)" if t.get("rejection_count") else ""
+        lines.append(f"### {s} {p} `{t['id']}` — {t['title']}{rej}")
         lines.append(f"*By `{t['created_by']}` {assign}{claimed} | {t['status']}*")
-        lines.append(f"{t['description'][:200]}{'...' if len(t['description'])>200 else ''}")
-        if t.get("resolution"):
-            lines.append(f"**Resolution**: {t['resolution'][:200]}")
-        lines.append("---\n")
+        lines.append(f"{t['description'][:200]}{'...' if len(t['description'])>200 else ''}\n---\n")
 
+    # Show folder structure hint
+    lines.append("📁 `tickets/` = open queue | `tickets/review/` = submitted | `tickets/closed/` = done | `tickets/rejected/` = failed")
     return "\n".join(lines)
 
 

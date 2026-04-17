@@ -189,9 +189,16 @@ You have access to an Agent Shared Memory MCP server for this project.
 MANDATORY PROTOCOL — follow these steps in order:
 1. Call memory_get_briefing() FIRST — read the full project context before doing anything
 2. Call memory_agent_join(agent_name="<your-unique-name>", agent_platform="<platform>")
-3. While working: call memory_write() after EVERY significant action (decisions, progress, discoveries, warnings)
-4. Every 10-15 minutes: call memory_checkpoint() to save your state
-5. Before finishing: call memory_handoff() with summary, next_steps, and warnings
+3. Call memory_list_tickets() — check if any tickets are assigned to you
+4. While working: call memory_write() after EVERY significant action
+5. Every 10-15 minutes: call memory_checkpoint()
+6. Before finishing: call memory_handoff()
+
+TICKETING — when you need help from another agent:
+- memory_create_ticket() — request help, assign to a specific agent/platform or leave open
+- memory_claim_ticket() — pick up a ticket assigned to you
+- memory_submit_ticket() — submit your work for review when done
+- memory_review_ticket() — approve or reject submitted work (with fix instructions if rejected)
 
 If you skip these steps, the next agent will have no context and will redo your work.
 Your agent_name is stamped on every entry — you are accountable for what you write.
@@ -257,7 +264,7 @@ memory_handoff(agent_name="...", summary="...", next_steps=["..."])
 
 ---
 
-## Tools (17 total)
+## Tools (22 total)
 
 | Category | Tool | Purpose |
 |----------|------|---------|
@@ -278,6 +285,11 @@ memory_handoff(agent_name="...", summary="...", next_steps=["..."])
 | Tokens | `memory_compact` | Compress old → save 70%+ |
 | Tokens | `memory_token_usage` | Token breakdown report |
 | Tokens | `memory_search_archive` | Search compacted entries |
+| Tickets | `memory_create_ticket` | Request help from another agent |
+| Tickets | `memory_claim_ticket` | Pick up a ticket to work on |
+| Tickets | `memory_submit_ticket` | Submit work for review |
+| Tickets | `memory_review_ticket` | Approve or reject submitted work |
+| Tickets | `memory_list_tickets` | List all tickets with filters |
 
 ## Memory Types
 
