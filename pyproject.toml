@@ -1,6 +1,6 @@
 [project]
 name = "agent-memory-mcp"
-version = "1.0.0"
+version = "1.7.0"
 description = "Shared memory MCP server for multi-agent project coordination. Solves context loss when agents (Claude, Cursor, Codex, etc.) work sequentially on the same project."
 readme = "README.md"
 requires-python = ">=3.10"

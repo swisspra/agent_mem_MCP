@@ -1443,11 +1443,40 @@ async def memory_submit_ticket(params: SubmitTicketInput) -> str:
             submit_path = _tickets_dir() / "review" / f"{t['id']}-submit.md"
             submit_path.write_text("\n".join(submit_lines), encoding="utf-8")
 
+            # Auto-handoff: agent submitted work, should leave for reviewer
+            agents = _load_agt()
+            for a in agents.values():
+                if a.get("agent_name") == params.agent_name and a.get("status") == AgentStatus.ACTIVE:
+                    a["status"] = AgentStatus.HANDED_OFF
+                    a["handed_off_at"] = _now()
+                    break
+            _save_agt(agents)
+
+            # Write handoff memory
+            mem = _load_mem()
+            mem.append({
+                "id": _id(), "agent_name": params.agent_name,
+                "memory_type": MemoryType.HANDOFF,
+                "title": f"Auto-handoff after submitting {t['id']}",
+                "content": (
+                    f"## Summary\nSubmitted ticket `{t['id']}`: {t['title']}\n\n"
+                    f"## What was done\n{params.summary}\n\n"
+                    f"## Next Steps\n1. Reviewer: check `tickets/review/{t['id']}-submit.md`\n"
+                    f"2. Approve → `memory_review_ticket(verdict='approve')`\n"
+                    f"3. Reject → `memory_review_ticket(verdict='reject')`"
+                ),
+                "tags": ["handoff", "ticket", "auto"],
+                "related_files": params.files_changed or [],
+                "priority": 3, "pinned": True,
+                "created_at": _now(), "timestamp": time.time()
+            })
+            _save_mem(mem)
+
             return (
                 f"📤 Submitted `{t['id']}` for review!\n"
                 f"**{t['title']}** by `{params.agent_name}`\n"
-                f"Report: `tickets/review/{t['id']}-submit.md`\n"
-                f"Waiting for reviewer to approve or reject."
+                f"Report: `tickets/review/{t['id']}-submit.md`\n\n"
+                f"🤝 Auto-handoff: you're checked out. Reviewer will pick this up."
             )
     return f"Ticket `{params.ticket_id}` not found."
 
@@ -1506,10 +1535,20 @@ async def memory_review_ticket(params: ReviewTicketInput) -> str:
                 })
                 _save_mem(mem)
 
+                # Auto-handoff reviewer
+                agents = _load_agt()
+                for a in agents.values():
+                    if a.get("agent_name") == params.agent_name and a.get("status") == AgentStatus.ACTIVE:
+                        a["status"] = AgentStatus.HANDED_OFF
+                        a["handed_off_at"] = _now()
+                        break
+                _save_agt(agents)
+
                 return (
                     f"✅ Approved `{t['id']}`: **{t['title']}**\n"
                     f"Moved to `tickets/closed/`\n"
-                    f"Reviewed by `{params.agent_name}`"
+                    f"Reviewed by `{params.agent_name}`\n\n"
+                    f"🤝 Auto-handoff: ticket closed, you're checked out."
                 )
 
             else:  # reject
@@ -1567,11 +1606,21 @@ async def memory_review_ticket(params: ReviewTicketInput) -> str:
                 })
                 _save_mem(mem)
 
+                # Auto-handoff reviewer — ticket reopened, next agent will see it
+                agents = _load_agt()
+                for a in agents.values():
+                    if a.get("agent_name") == params.agent_name and a.get("status") == AgentStatus.ACTIVE:
+                        a["status"] = AgentStatus.HANDED_OFF
+                        a["handed_off_at"] = _now()
+                        break
+                _save_agt(agents)
+
                 return (
                     f"❌ Rejected `{t['id']}`: **{t['title']}**\n"
                     f"Rejection note: `tickets/rejected/{t['id']}-rejected.md`\n"
                     f"Ticket reopened for next agent to fix.\n"
-                    f"Reviewed by `{params.agent_name}`"
+                    f"Reviewed by `{params.agent_name}`\n\n"
+                    f"🤝 Auto-handoff: you're checked out. Next agent will see this ticket."
                 )
     return f"Ticket `{params.ticket_id}` not found."
 
