@@ -400,6 +400,7 @@ agent-memory-mcp/
 ├── pyproject.toml         ← Package metadata
 ├── README.md              ← This file
 ├── setup-project.sh       ← Project setup script
+├── update.sh              ← Pull latest + reinstall + deploy
 ├── hooks/                 ← Platform hook scripts
 │   ├── cursor-session-start.sh
 │   ├── cursor-session-end.sh
@@ -410,6 +411,17 @@ agent-memory-mcp/
     ├── cursor-mcp.json
     └── claude-code-settings.json
 ```
+
+## Updating
+
+```bash
+bash update.sh
+```
+
+This will:
+1. `git pull` latest changes
+2. Reinstall venv dependencies (if venv exists)
+3. Auto-deploy to any separate installed copies (detected from your local Claude Desktop config — nothing is exposed or shared)
 
 ## Tips
 
