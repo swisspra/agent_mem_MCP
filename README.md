@@ -19,7 +19,12 @@ your-project/
 │   ├── project.json         ← Project metadata
 │   ├── archive.json         ← Compacted old entries
 │   ├── digests.json         ← Compressed long-term memory
-│   └── checkpoints/         ← Periodic snapshots
+│   ├── checkpoints/         ← Periodic snapshots
+│   └── tickets/             ← Ticketing system
+│       ├── TK-xxx.md        ← Open tickets (queue)
+│       ├── review/          ← Submitted work for review
+│       ├── closed/          ← Approved (ticket + submission + review)
+│       └── rejected/        ← Failed (ticket + submission + rejection note)
 ├── .agent-mem-hooks/        ← Hook scripts (commit to git)
 ├── .cursor/hooks.json       ← Cursor hook config
 ├── .claude/settings.json    ← Claude Code hook config
@@ -262,6 +267,47 @@ memory_checkpoint(agent_name="...", summary="...")
 memory_handoff(agent_name="...", summary="...", next_steps=["..."])
 ```
 
+### Ticketing (request help from other agents)
+
+```
+# PM creates a ticket for cursor to fix CSS
+memory_create_ticket(
+  agent_name="claude-pm",
+  title="CSS bug on WiFi page",
+  description="Buttons overlap on mobile < 375px",
+  priority="high",
+  assigned_to="cursor"
+)
+
+# Cursor checks in later → sees "🎫 1 ticket waiting!"
+memory_claim_ticket(agent_name="cursor-v1", ticket_id="TK-abc123")
+
+# Cursor finishes → submits for review
+memory_submit_ticket(
+  agent_name="cursor-v1",
+  ticket_id="TK-abc123",
+  summary="Fixed flex-wrap + min-width",
+  files_changed=["src/wifi/styles.css"]
+)
+
+# Reviewer approves → moved to closed/
+memory_review_ticket(
+  agent_name="claude-reviewer",
+  ticket_id="TK-abc123",
+  verdict="approve",
+  review_notes="Fix verified on 375px viewport"
+)
+
+# Or rejects → moved to rejected/ + reopened
+memory_review_ticket(
+  agent_name="claude-reviewer",
+  ticket_id="TK-abc123",
+  verdict="reject",
+  review_notes="Still breaks on 320px",
+  fix_instructions="Also add min-width to .wifi-header"
+)
+```
+
 ---
 
 ## Tools (22 total)
@@ -350,7 +396,7 @@ Set `ANTHROPIC_API_KEY` for LLM-powered compression, or use rule-based (default)
 
 ```
 agent-memory-mcp/
-├── server.py              ← MCP server (17 tools)
+├── server.py              ← MCP server (22 tools)
 ├── pyproject.toml         ← Package metadata
 ├── README.md              ← This file
 ├── setup-project.sh       ← Project setup script
@@ -365,18 +411,12 @@ agent-memory-mcp/
     └── claude-code-settings.json
 ```
 
-***Suggestion***
-Few prompt you should tell your agent right after setup or add these to bootstrap
+## Tips
 
--MANDATORY RULE: Do not edit the code until agent got confirmation from user
--MANDATORY RULE: Auto-save memory after EVERY code change. All agents must do memory_write immediately right after edit/create/delete *always* do not wait for user to tell you to do it.
-
-**Bonus**
--If apply this MCP to existing project, You should tell your first agent, Opus is recommended, to read and understand architecture and codebase. Then tell it to compact all information to be ready for other agent with minimum token usage.
-
-
-***********
+- **MANDATORY RULE**: Do not edit code until agent gets confirmation from user.
+- **MANDATORY RULE**: Auto-save memory after EVERY code change. All agents must call `memory_write` immediately after edit/create/delete — do not wait for user to tell you.
+- If applying to an existing project, tell your first agent (Opus recommended) to read and understand the architecture and codebase, then compact all info for other agents with minimum token usage.
 
 ## License
 
-NOT MIT
+MIT
