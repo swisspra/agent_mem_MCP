@@ -120,6 +120,20 @@ def _mark_prev_kia(exclude=None):
             info["kia_at"] = _now(); info["kia_reason"] = "new_agent_joined"; changed = True
     if changed: _save_agt(agents)
 
+def _require_joined(agent_name: str) -> Optional[str]:
+    """Check if agent has joined. Returns error message if not, None if OK."""
+    agents = _load_agt()
+    for a in agents.values():
+        if a.get("agent_name") == agent_name and a.get("status") == AgentStatus.ACTIVE:
+            return None
+    return (
+        f"⛔ BLOCKED: Agent `{agent_name}` has not joined this project.\n\n"
+        f"You MUST call these tools IN ORDER before doing anything:\n"
+        f"1. `memory_get_briefing()` — read project context\n"
+        f"2. `memory_agent_join(agent_name='{agent_name}', agent_platform='...')` — register yourself\n\n"
+        f"Only then can you write memories, checkpoints, or handoffs."
+    )
+
 # ── Tiered Memory Engine ────────────────────────────────
 def _archive_p(): return MEMORY_DIR / "archive.json"
 def _digests_p(): return MEMORY_DIR / "digests.json"
@@ -286,28 +300,29 @@ def _split_hot_cold(memories: list) -> tuple:
 
 # ── Input Models ────────────────────────────────────────
 class ProjectInitInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
     description: str = Field(..., description="What this project is about", min_length=1, max_length=1000)
     tech_stack: Optional[str] = Field(default=None, description="Tech stack summary")
 
 class AgentJoinInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    agent_name: str = Field(..., description="Your unique identity (e.g. 'claude-opus-api', 'cursor-agent-1', 'codex-pr-42')", min_length=1, max_length=100)
-    agent_platform: str = Field(..., description="'claude'|'cursor'|'codex'|'claude-code'|'antigravity'|'windsurf'|'other'", min_length=1, max_length=50)
-    task_focus: Optional[str] = Field(default=None, description="What you'll work on", max_length=500)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
+    agent_name: str = Field(..., description="Your stable identity — keep the SAME name across sessions. Example: 'claude-main', 'cursor-coder', 'codex-main'. Do NOT put dates or model names in here.", min_length=1, max_length=100)
+    agent_platform: str = Field(default="unknown", description="Platform: claude, cursor, codex, claude-code, antigravity, windsurf, other", max_length=50)
+    agent_role: str = Field(default="main", description="Role: main (default), reviewer, utility, planner", max_length=30)
+    task_focus: Optional[str] = Field(default=None, description="What you'll work on this session", max_length=500)
 
 class MemoryWriteInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
-    agent_name: str = Field(..., description="Your agent name (MUST match agent_join)", min_length=1, max_length=100)
-    memory_type: MemoryType = Field(..., description="decision|progress|blocker|context|handoff|todo|file_change|discovery|warning|checkpoint")
-    title: str = Field(..., description="Short summary", min_length=1, max_length=200)
-    content: str = Field(..., description="Detail", min_length=1, max_length=10000)
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
+    agent_name: str = Field(..., description="Your agent name — same name you used in memory_agent_join. Example: cursor-coder-1", min_length=1, max_length=100)
+    memory_type: MemoryType = Field(..., description="One of: decision, progress, blocker, context, handoff, todo, file_change, discovery, warning, checkpoint")
+    title: str = Field(..., description="Short one-line summary of what happened", min_length=1, max_length=200)
+    content: str = Field(..., description="Detailed description — be specific, include file names and reasoning", min_length=1, max_length=10000)
     tags: Optional[List[str]] = Field(default_factory=list)
     related_files: Optional[List[str]] = Field(default_factory=list)
     priority: Optional[int] = Field(default=0, ge=0, le=3, description="0=normal 3=critical(auto-pin)")
 
 class MemoryReadInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
     memory_type: Optional[MemoryType] = None
     tag: Optional[str] = None
     agent_name: Optional[str] = Field(default=None, description="Filter by who wrote it")
@@ -316,7 +331,7 @@ class MemoryReadInput(BaseModel):
     response_format: ResponseFormat = Field(default=ResponseFormat.MARKDOWN)
 
 class CheckpointInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
     agent_name: str = Field(..., min_length=1, max_length=100)
     summary: str = Field(..., min_length=1, max_length=5000)
     remaining_tasks: Optional[List[str]] = Field(default_factory=list)
@@ -324,7 +339,7 @@ class CheckpointInput(BaseModel):
     blockers: Optional[List[str]] = Field(default_factory=list)
 
 class HandoffInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
     agent_name: str = Field(..., min_length=1, max_length=100)
     summary: str = Field(..., min_length=1, max_length=5000)
     next_steps: List[str] = Field(..., min_length=1)
@@ -333,37 +348,37 @@ class HandoffInput(BaseModel):
     files_created: Optional[List[str]] = Field(default_factory=list)
 
 class BriefingInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
     focus_area: Optional[str] = None
     include_full_history: Optional[bool] = False
     token_budget: Optional[int] = Field(default=4000, description="Max tokens for briefing output. Lower = cheaper. Default 4000.", ge=500, le=50000)
 
 class SearchInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
     query: str = Field(..., min_length=1, max_length=200)
     limit: Optional[int] = Field(default=20, ge=1, le=100)
 
 class PinInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
     memory_id: str = Field(..., min_length=1)
     pinned: bool = True
 
 class UpdateStateInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
     key: str = Field(..., min_length=1, max_length=100)
     value: str = Field(..., max_length=5000)
     agent_name: Optional[str] = Field(default=None, max_length=100)
 
 class CompactInput(BaseModel):
     """Compact old memories into digests to save tokens."""
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
     agent_name: Optional[str] = Field(default=None, description="Who is running the compaction", max_length=100)
     force: Optional[bool] = Field(default=False, description="Force compaction even if under threshold")
-    use_llm: Optional[bool] = Field(default=True, description="Use Claude API for smart summaries (needs ANTHROPIC_API_KEY)")
+    use_llm: Optional[bool] = Field(default=False, description="Use external LLM API for summaries. Default False — rule-based is fine for most cases. You (the calling agent) can summarize better yourself.")
 
 class BootstrapInput(BaseModel):
     """Bootstrap memory for an existing project by scanning the codebase."""
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
     agent_name: str = Field(..., description="Your agent name doing the bootstrap", min_length=1, max_length=100)
     description: str = Field(..., description="Project description", min_length=1, max_length=1000)
     tech_stack: Optional[str] = Field(default=None, description="Tech stack")
@@ -398,7 +413,7 @@ async def memory_agent_join(params: AgentJoinInput) -> str:
     aid = f"{params.agent_platform}-{_id()}"
     agents = _load_agt()
     agents[aid] = {"agent_name": params.agent_name, "agent_platform": params.agent_platform,
-                   "task_focus": params.task_focus, "status": AgentStatus.ACTIVE,
+                   "agent_role": params.agent_role, "task_focus": params.task_focus, "status": AgentStatus.ACTIVE,
                    "joined_at": _now(), "last_activity": time.time(), "memories_written": 0}
     _save_agt(agents)
     lines = [f"✅ Active agent: **{params.agent_name}** ({params.agent_platform})", f"ID: `{aid}`", ""]
@@ -434,6 +449,8 @@ async def memory_agent_join(params: AgentJoinInput) -> str:
 @mcp.tool(name="memory_write", annotations={"title":"Write Memory","readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
 async def memory_write(params: MemoryWriteInput) -> str:
     """Write a memory entry stamped with your agent_name. Write frequently — if you die, this is all the next agent has."""
+    err = _require_joined(params.agent_name)
+    if err: return err
     mem = _load_mem()
     entry = {"id": _id(), "agent_name": params.agent_name, "memory_type": params.memory_type,
              "title": params.title, "content": params.content, "tags": params.tags or [],
@@ -486,6 +503,8 @@ async def memory_search(params: SearchInput) -> str:
 @mcp.tool(name="memory_checkpoint", annotations={"title":"Save Checkpoint","readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
 async def memory_checkpoint(params: CheckpointInput) -> str:
     """Full state checkpoint. Do every 10-15 min or before risky ops. Saves both as memory entry AND standalone file."""
+    err = _require_joined(params.agent_name)
+    if err: return err
     cpd = {"summary": params.summary, "remaining_tasks": params.remaining_tasks or [],
            "active_branch": params.active_branch, "blockers": params.blockers or [], "state": _load_sta()}
     mem = _load_mem()
@@ -502,6 +521,8 @@ async def memory_checkpoint(params: CheckpointInput) -> str:
 @mcp.tool(name="memory_handoff", annotations={"title":"Handoff to Next Agent","readOnlyHint":False,"destructiveHint":False,"idempotentHint":False,"openWorldHint":False})
 async def memory_handoff(params: HandoffInput) -> str:
     """Formal handoff. ALWAYS call before leaving. Next agent sees this first."""
+    err = _require_joined(params.agent_name)
+    if err: return err
     content = f"## Summary\n{params.summary}\n\n## Next Steps\n" + "\n".join(f"{i+1}. {s}" for i,s in enumerate(params.next_steps)) + "\n"
     if params.warnings: content += "\n## ⚠️ Warnings\n" + "\n".join(f"- {w}" for w in params.warnings) + "\n"
     if params.files_modified: content += "\n## Modified\n" + "\n".join(f"- `{f}`" for f in params.files_modified) + "\n"
@@ -678,9 +699,13 @@ async def memory_get_briefing(params: BriefingInput) -> str:
             _add(f"- {pe} `{t['id']}` **{t['title']}** ({t['status']}) {assign} — from `{t['created_by']}`")
         _add("")
 
-    L += ["## 🚀 Protocol","1. `memory_agent_join` — register","2. `memory_write` — after EVERY action",
-          "3. `memory_checkpoint` — every 10-15 min","4. `memory_handoff` — before leaving",
-          "5. `memory_compact` — when token_usage gets high"]
+    L += ["## 🚨 MANDATORY PROTOCOL — DO NOT SKIP",
+          "**STEP 1**: `memory_agent_join(agent_name='your-stable-name', agent_platform='your-platform')` — YOU CANNOT WRITE ANYTHING UNTIL YOU JOIN",
+          "**STEP 2**: `memory_write` after EVERY code change, decision, or discovery — NO EXCEPTIONS",
+          "**STEP 3**: `memory_checkpoint` every 10-15 min — if you die, this is all the next agent has",
+          "**STEP 4**: `memory_handoff` before you finish — the next agent depends on this",
+          "**STEP 5**: `memory_list_tickets` — check if anyone needs your help",
+          "⛔ If you skip steps, your work will be untracked and the next agent will redo everything."]
     return "\n".join(L)
 
 @mcp.tool(name="memory_status", annotations={"title":"Status","readOnlyHint":True,"destructiveHint":False,"idempotentHint":True,"openWorldHint":False})
@@ -855,10 +880,62 @@ async def memory_token_usage() -> str:
         potential_saving = int(cold_tokens * 0.7)  # ~70% savings typical
         lines.append(f"## 💡 Recommendation")
         lines.append(f"Run `memory_compact` to save ~{potential_saving:,} tokens ({len(cold)} old entries)")
-        if not ANTHROPIC_API_KEY:
-            lines.append(f"Set ANTHROPIC_API_KEY for LLM-powered summaries (better quality)")
+        lines.append(f"Or use `memory_prepare_compaction` to review entries before compacting — you can summarize them yourself for better quality at no extra cost.")
     else:
         lines.append("✅ Memory is lean — no compaction needed.")
+
+    return "\n".join(lines)
+
+
+@mcp.tool(name="memory_prepare_compaction", annotations={"title":"Prepare Compaction (Agent-Driven)","readOnlyHint":True,"destructiveHint":False,"idempotentHint":True,"openWorldHint":False})
+async def memory_prepare_compaction() -> str:
+    """Returns cold entries grouped by agent session — ready for YOU to summarize.
+
+    Instead of using an external LLM (which double-charges), YOU are already an LLM.
+    Read the returned entries, write your own digest with memory_write(memory_type='context'),
+    then run memory_compact(use_llm=False) to archive the originals.
+
+    Workflow:
+    1. Call memory_prepare_compaction() → get grouped cold entries
+    2. Read and summarize them yourself (you're an LLM, this is what you do)
+    3. Call memory_write(memory_type='context', title='Digest: ...', content='your summary')
+    4. Call memory_compact(use_llm=False) → archives cold entries, keeps your digest
+
+    Returns:
+        str: Cold entries grouped by agent, with token counts.
+    """
+    mem = _load_mem()
+    hot, cold = _split_hot_cold(mem)
+
+    if not cold:
+        return f"Nothing to compact. All {len(hot)} entries are recent/pinned."
+
+    # Group by agent
+    by_agent = {}
+    for m in cold:
+        by_agent.setdefault(m.get("agent_name", "unknown"), []).append(m)
+
+    lines = [
+        f"# 🗜️ Compaction Preview",
+        f"**{len(cold)} cold entries** (~{_count_mem_tokens(cold):,} tokens) ready to compress",
+        f"**{len(hot)} hot entries** will be kept as-is",
+        f"",
+    ]
+
+    for agent_name, entries in by_agent.items():
+        tokens = _count_mem_tokens(entries)
+        lines.append(f"## Agent: `{agent_name}` ({len(entries)} entries, ~{tokens:,} tokens)")
+        for e in entries:
+            pri = "🔴" * e.get("priority", 0) if e.get("priority", 0) > 0 else ""
+            lines.append(f"- {pri}[{e['memory_type'].upper()}] **{e['title']}**: {e['content'][:120]}...")
+        lines.append("")
+
+    lines.append("---")
+    lines.append("## Next steps")
+    lines.append("1. Read the entries above and write a digest:")
+    lines.append("   `memory_write(memory_type='context', title='Digest: <agent> session', content='<your summary>')`")
+    lines.append("2. Then compact: `memory_compact(use_llm=False)`")
+    lines.append("This saves tokens AND gives better summaries — because you understand the project context.")
 
     return "\n".join(lines)
 
@@ -1158,7 +1235,7 @@ def _scan_context_dir(d: Path, max_files: int = 20) -> list:
 
 class ContextDirReadInput(BaseModel):
     """Read a file from one of the configured context directories."""
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
     filename: str = Field(..., description="Filename or relative path to read from context dirs", min_length=1, max_length=500)
     max_chars: Optional[int] = Field(default=3000, description="Max characters to return", ge=100, le=50000)
 
@@ -1296,7 +1373,7 @@ class TicketStatus(str, Enum):
     IN_REVIEW = "in_review"; CLOSED = "closed"; REJECTED = "rejected"
 
 class CreateTicketInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
     agent_name: str = Field(..., description="Who is creating this ticket", min_length=1, max_length=100)
     title: str = Field(..., description="Short ticket title", min_length=1, max_length=200)
     description: str = Field(..., description="What needs to be done — be specific", min_length=1, max_length=5000)
@@ -1306,12 +1383,12 @@ class CreateTicketInput(BaseModel):
     related_files: Optional[List[str]] = Field(default_factory=list)
 
 class ClaimTicketInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
     agent_name: str = Field(..., min_length=1, max_length=100)
     ticket_id: str = Field(..., description="Ticket ID to claim", min_length=1)
 
 class SubmitTicketInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
     agent_name: str = Field(..., min_length=1, max_length=100)
     ticket_id: str = Field(..., min_length=1)
     summary: str = Field(..., description="What was done", min_length=1, max_length=5000)
@@ -1319,7 +1396,7 @@ class SubmitTicketInput(BaseModel):
     notes: Optional[str] = Field(default=None, description="Any additional notes for reviewer", max_length=2000)
 
 class ReviewTicketInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
     agent_name: str = Field(..., description="Reviewer agent name", min_length=1, max_length=100)
     ticket_id: str = Field(..., min_length=1)
     verdict: str = Field(..., description="'approve' or 'reject'", pattern="^(approve|reject)$")
@@ -1327,7 +1404,7 @@ class ReviewTicketInput(BaseModel):
     fix_instructions: Optional[str] = Field(default=None, description="If rejected: how to fix", max_length=5000)
 
 class ListTicketsInput(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    model_config = ConfigDict(str_strip_whitespace=True, extra="ignore")
     status: Optional[TicketStatus] = Field(default=None, description="Filter by status")
     assigned_to: Optional[str] = Field(default=None, description="Filter by assignee")
     include_closed: Optional[bool] = Field(default=False, description="Include closed/rejected tickets")
@@ -1345,6 +1422,8 @@ async def memory_create_ticket(params: CreateTicketInput) -> str:
     - Coder needs review: assigned_to="claude"
     - Anyone can pick up: assigned_to=None
     """
+    err = _require_joined(params.agent_name)
+    if err: return err
     _tickets_dir()
     ticket_id = f"TK-{_id()}"
     ticket_data = {

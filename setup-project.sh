@@ -27,6 +27,14 @@ chmod +x "$HOOKS_DIR"/*.sh
 
 echo "✅ Hooks copied to .agent-mem-hooks/"
 
+# ── 1b. Copy SKILL.md to Claude Code skills ──
+SKILL_DIR="$PROJECT_DIR/.claude/skills/agent-memory"
+mkdir -p "$SKILL_DIR"
+if [ -f "$SCRIPT_DIR/SKILL.md" ]; then
+    cp "$SCRIPT_DIR/SKILL.md" "$SKILL_DIR/SKILL.md"
+    echo "✅ SKILL.md copied to .claude/skills/agent-memory/"
+fi
+
 # ── 2. Set up Cursor hooks ──
 CURSOR_DIR="$PROJECT_DIR/.cursor"
 mkdir -p "$CURSOR_DIR"
