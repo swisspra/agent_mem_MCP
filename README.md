@@ -180,6 +180,25 @@ Hooks auto-inject memory context on session start and save emergency checkpoints
 
 ---
 
+## Universal: SKILL.md (works on ALL platforms)
+
+`SKILL.md` is a universal instruction file that forces any agent to follow the memory protocol — no hooks needed.
+
+Copy it to the right location per platform:
+
+| Platform | Where to put SKILL.md |
+|----------|----------------------|
+| Claude Code | `.claude/skills/agent-memory/SKILL.md` |
+| Cursor | Copy content into `.cursorrules` or `.cursor/rules/agent-memory.mdc` |
+| Codex | Copy content into `AGENTS.md` |
+| AntiGravity | Paste into system prompt / custom instructions |
+
+Or run `setup-project.sh` which copies it automatically for Claude Code.
+
+**Why this works**: Every AI platform reads instruction files. Not all support MCP hooks. SKILL.md is the universal fallback that ensures agents follow the protocol regardless of platform.
+
+---
+
 ## For Agents Without Hooks (Codex, AntiGravity, etc.)
 
 Agents that don't support lifecycle hooks won't auto-read memory on startup. You need to tell them via **system prompt / rules file / AGENTS.md**.
@@ -396,7 +415,8 @@ Set `ANTHROPIC_API_KEY` for LLM-powered compression, or use rule-based (default)
 
 ```
 agent-memory-mcp/
-├── server.py              ← MCP server (22 tools)
+├── server.py              ← MCP server (23 tools)
+├── SKILL.md               ← Universal agent instructions (works on ALL platforms)
 ├── pyproject.toml         ← Package metadata
 ├── README.md              ← This file
 ├── setup-project.sh       ← Project setup script
