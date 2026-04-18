@@ -1,4 +1,4 @@
-# 🧠 Agent Shared Memory MCP
+# 🧠 Agent-Cross Platform Shared Memory MCP
 
 **Project-local** shared memory for multi-agent sequential workflows. When agents die, context survives.
 
