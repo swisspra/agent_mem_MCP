@@ -329,7 +329,7 @@ memory_review_ticket(
 
 ---
 
-## Tools (22 total)
+## Tools (23 total)
 
 | Category | Tool | Purpose |
 |----------|------|---------|
@@ -348,11 +348,12 @@ memory_review_ticket(
 | Context | `memory_context_dirs` | List external ref dirs |
 | Context | `memory_context_read` | Read from external dirs |
 | Tokens | `memory_compact` | Compress old → save 70%+ |
+| Tokens | `memory_prepare_compaction` | Preview cold entries for agent-driven summary |
 | Tokens | `memory_token_usage` | Token breakdown report |
 | Tokens | `memory_search_archive` | Search compacted entries |
 | Tickets | `memory_create_ticket` | Request help from another agent |
 | Tickets | `memory_claim_ticket` | Pick up a ticket to work on |
-| Tickets | `memory_submit_ticket` | Submit work for review |
+| Tickets | `memory_submit_ticket` | Submit work for review (auto-handoff) |
 | Tickets | `memory_review_ticket` | Approve or reject submitted work |
 | Tickets | `memory_list_tickets` | List all tickets with filters |
 
