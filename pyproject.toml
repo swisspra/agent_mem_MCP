@@ -7,7 +7,7 @@ requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 
 dependencies = [
-    "mcp[cli]>=1.0.0,<2",
+    "mcp[cli]>=1.0.0,<3",
     "pydantic>=2.0.0",
 ]
 
